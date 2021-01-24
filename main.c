@@ -62,7 +62,7 @@ int main(void)
   }
 
   struct sockaddr_in udpSockaddr;
-  if (!buildSockaddr4("localhost", 12345, &udpSockaddr))
+  if (!buildSockaddr4("226.1.1.1", 12345, &udpSockaddr))
   {
     close(tcpReceiveSocket);
     close(udpSendSocket);
