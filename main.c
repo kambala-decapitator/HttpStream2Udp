@@ -8,7 +8,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define STREAM_ADDRESS "239.255.0.4"
 #define BUFFER_SIZE 4096
 
 void exitError(const char* msg)
@@ -28,14 +27,30 @@ bool buildSockaddr4(const char* address, uint16_t port, struct sockaddr_in* pSoc
   return inet_pton(AF_INET, address, &pSockaddr->sin_addr) != -1;
 }
 
-int main(void)
+int main(int argc, const char** argv)
 {
+  const char* udpxyAddress = NULL;
+  uint16_t udpxyPort = 4022;
+  const char* streamMulticastGroup = NULL;
+  uint16_t streamMulticastPort = 0;
+  for (int i = 1; i < argc; ++i)
+  {
+    if (strcmp(argv[i], "--udpxy-address") == 0)
+      udpxyAddress = argv[++i];
+    else if (strcmp(argv[i], "--udpxy-port") == 0)
+      udpxyPort = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--stream-mgroup") == 0)
+      streamMulticastGroup = argv[++i];
+    else if (strcmp(argv[i], "--stream-port") == 0)
+      streamMulticastPort = atoi(argv[++i]);
+  }
+
   int tcpReceiveSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (tcpReceiveSocket == -1)
     exitError("cannot create TCP socket");
 
   struct sockaddr_in tcpSockaddr;
-  if (!buildSockaddr4("localhost", 4022, &tcpSockaddr))
+  if (!buildSockaddr4(udpxyAddress, udpxyPort, &tcpSockaddr))
   {
     close(tcpReceiveSocket);
     exitError("cannot build address for TCP socket");
@@ -47,7 +62,10 @@ int main(void)
     exitError("TCP connect failed");
   }
 
-  const char* udpxyRequest = "GET /udp/" STREAM_ADDRESS ":5500 HTTP/1.0\r\n\r\n";
+  const char* udpxyFormat = "GET /udp/%s:%u HTTP/1.0\r\n\r\n";
+  int udpxyRequestSize = snprintf(NULL, 0, udpxyFormat, streamMulticastGroup, streamMulticastPort) + 1;
+  char udpxyRequest[udpxyRequestSize];
+  snprintf(udpxyRequest, udpxyRequestSize, udpxyFormat, streamMulticastGroup, streamMulticastPort);
   if (send(tcpReceiveSocket, udpxyRequest, strlen(udpxyRequest), 0) == -1)
   {
     close(tcpReceiveSocket);
@@ -62,7 +80,7 @@ int main(void)
   }
 
   struct sockaddr_in udpSockaddr;
-  if (!buildSockaddr4("226.1.1.1", 12345, &udpSockaddr))
+  if (!buildSockaddr4(streamMulticastGroup, streamMulticastPort, &udpSockaddr))
   {
     close(tcpReceiveSocket);
     close(udpSendSocket);
