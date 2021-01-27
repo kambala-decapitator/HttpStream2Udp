@@ -120,30 +120,28 @@ int main(int argc, const char** argv)
     exitError("getifaddrs() error");
   }
 
-  struct in_addr* pUdpSendSocketInterface = NULL;
+  struct in_addr udpSendSocketInterface = {0};
   for (struct ifaddrs* ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
   {
     if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET && strcmp(ifa->ifa_name, streamMulticastInterface) == 0)
     {
-      pUdpSendSocketInterface = &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
+      udpSendSocketInterface = ((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
       break;
     }
   }
-  if (pUdpSendSocketInterface == NULL)
+  freeifaddrs(ifaddr);
+  if (udpSendSocketInterface.s_addr == 0)
   {
-    freeifaddrs(ifaddr);
     close(tcpReceiveSocket);
     close(udpSendSocket);
     exitError("selected interface not found for UDP socket");
   }
-  if (setsockopt(udpSendSocket, IPPROTO_IP, IP_MULTICAST_IF, pUdpSendSocketInterface, sizeof *pUdpSendSocketInterface) < 0)
+  if (setsockopt(udpSendSocket, IPPROTO_IP, IP_MULTICAST_IF, &udpSendSocketInterface, sizeof udpSendSocketInterface) < 0)
   {
-    freeifaddrs(ifaddr);
     close(tcpReceiveSocket);
     close(udpSendSocket);
     exitError("cannot set interface for UDP socket");
   }
-  freeifaddrs(ifaddr);
 
   char udpxyResponse[BUFFER_SIZE];
   const char* streamPrefix = "application/octet-stream\r\n\r\n";
