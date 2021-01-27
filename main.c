@@ -55,7 +55,7 @@ int main(int argc, const char** argv)
       streamMulticastPort = atoi(argv[++i]);
   }
 
-  int tcpReceiveSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  int tcpReceiveSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (tcpReceiveSocket == -1)
     exitError("cannot create TCP socket");
 
@@ -94,7 +94,7 @@ int main(int argc, const char** argv)
     exitError("TCP send failed");
   }
 
-  int udpSendSocket = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  int udpSendSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (udpSendSocket == -1)
   {
     close(tcpReceiveSocket);
