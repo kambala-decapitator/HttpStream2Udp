@@ -1,7 +1,9 @@
 #include <arpa/inet.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <ifaddrs.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,16 +31,24 @@ bool buildSockaddr4(const char* address, uint16_t port, struct sockaddr_in* pSoc
 
 int main(int argc, const char** argv)
 {
+  const char* udpxyInterface = NULL;
   const char* udpxyAddress = NULL;
   uint16_t udpxyPort = 4022;
+
+  const char* streamMulticastInterface = NULL;
   const char* streamMulticastGroup = NULL;
   uint16_t streamMulticastPort = 0;
+
   for (int i = 1; i < argc; ++i)
   {
-    if (strcmp(argv[i], "--udpxy-address") == 0)
+    if (strcmp(argv[i], "--udpxy-interface") == 0)
+      udpxyInterface = argv[++i];
+    else if (strcmp(argv[i], "--udpxy-address") == 0)
       udpxyAddress = argv[++i];
     else if (strcmp(argv[i], "--udpxy-port") == 0)
       udpxyPort = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--stream-interface") == 0)
+      streamMulticastInterface = argv[++i];
     else if (strcmp(argv[i], "--stream-mgroup") == 0)
       streamMulticastGroup = argv[++i];
     else if (strcmp(argv[i], "--stream-port") == 0)
@@ -54,6 +64,18 @@ int main(int argc, const char** argv)
   {
     close(tcpReceiveSocket);
     exitError("cannot build address for TCP socket");
+  }
+
+  unsigned int tcpReceiveSocketInterfaceIndex = if_nametoindex(udpxyInterface);
+  if (tcpReceiveSocketInterfaceIndex == 0)
+  {
+    close(tcpReceiveSocket);
+    exitError("selected interface not found for TCP socket");
+  }
+  if (setsockopt(tcpReceiveSocket, IPPROTO_IP, IP_BOUND_IF, &tcpReceiveSocketInterfaceIndex, sizeof tcpReceiveSocketInterfaceIndex) < 0)
+  {
+    close(tcpReceiveSocket);
+    exitError("cannot set interface for TCP socket");
   }
 
   if (connect(tcpReceiveSocket, (struct sockaddr*)&tcpSockaddr, sizeof tcpSockaddr) == -1)
@@ -86,6 +108,39 @@ int main(int argc, const char** argv)
     close(udpSendSocket);
     exitError("cannot build address for UDP socket");
   }
+
+  struct ifaddrs* ifaddr;
+  if (getifaddrs(&ifaddr) == -1)
+  {
+    close(tcpReceiveSocket);
+    close(udpSendSocket);
+    exitError("getifaddrs() error");
+  }
+
+  struct in_addr* pUdpSendSocketInterface = NULL;
+  for (struct ifaddrs* ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+  {
+    if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET && strcmp(ifa->ifa_name, streamMulticastInterface) == 0)
+    {
+      pUdpSendSocketInterface = &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
+      break;
+    }
+  }
+  if (pUdpSendSocketInterface == NULL)
+  {
+    freeifaddrs(ifaddr);
+    close(tcpReceiveSocket);
+    close(udpSendSocket);
+    exitError("selected interface not found for UDP socket");
+  }
+  if (setsockopt(udpSendSocket, IPPROTO_IP, IP_MULTICAST_IF, pUdpSendSocketInterface, sizeof *pUdpSendSocketInterface) < 0)
+  {
+    freeifaddrs(ifaddr);
+    close(tcpReceiveSocket);
+    close(udpSendSocket);
+    exitError("cannot set interface for UDP socket");
+  }
+  freeifaddrs(ifaddr);
 
   char udpxyResponse[BUFFER_SIZE];
   const char* streamPrefix = "application/octet-stream\r\n\r\n";
