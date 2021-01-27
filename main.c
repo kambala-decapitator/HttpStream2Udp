@@ -109,6 +109,9 @@ int main(int argc, const char** argv)
     exitError("cannot build address for UDP socket");
   }
 
+  uint8_t disableMulticastLoopback = 0;
+  setsockopt(udpSendSocket, IPPROTO_IP, IP_MULTICAST_LOOP, &disableMulticastLoopback, sizeof disableMulticastLoopback);
+
   struct ifaddrs* ifaddr;
   if (getifaddrs(&ifaddr) == -1)
   {
