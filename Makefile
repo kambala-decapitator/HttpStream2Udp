@@ -1,6 +1,6 @@
 SHELL = /bin/sh
 
-CFLAGS = -std=c99 -Wpedantic
+override CFLAGS += -std=c99 -pedantic
 
 all:
 	$(CC) $(CFLAGS) -o HttpStream2Udp main.c
