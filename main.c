@@ -29,6 +29,18 @@ bool buildSockaddr4(const char* address, uint16_t port, struct sockaddr_in* pSoc
   return inet_pton(AF_INET, address, &pSockaddr->sin_addr) != -1;
 }
 
+struct in_addr getInaddr4ForInterface(const char* interface, struct ifaddrs* ifaddr)
+{
+  const struct in_addr empty = {0};
+  if (!interface || !ifaddr)
+    return empty;
+
+  for (struct ifaddrs* ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+    if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET && strcmp(ifa->ifa_name, interface) == 0)
+      return ((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
+  return empty;
+}
+
 int main(int argc, const char** argv)
 {
   const char* udpxyInterface = NULL;
@@ -66,21 +78,35 @@ int main(int argc, const char** argv)
     exitError("cannot build address for TCP socket");
   }
 
-  unsigned int tcpReceiveSocketInterfaceIndex = if_nametoindex(udpxyInterface);
-  if (tcpReceiveSocketInterfaceIndex == 0)
+  struct ifaddrs* ifaddr;
+  if (getifaddrs(&ifaddr) == -1)
   {
     close(tcpReceiveSocket);
+    exitError("getifaddrs() error");
+  }
+
+  struct in_addr tcpReceiveSocketBoundInaddr = getInaddr4ForInterface(udpxyInterface, ifaddr);
+  if (tcpReceiveSocketBoundInaddr.s_addr == 0)
+  {
+    close(tcpReceiveSocket);
+    freeifaddrs(ifaddr);
     exitError("selected interface not found for TCP socket");
   }
-  if (setsockopt(tcpReceiveSocket, IPPROTO_IP, IP_BOUND_IF, &tcpReceiveSocketInterfaceIndex, sizeof tcpReceiveSocketInterfaceIndex) < 0)
+
+  struct sockaddr_in tcpReceiveSocketLocalSockaddr = {0};
+  tcpReceiveSocketLocalSockaddr.sin_family = AF_INET;
+  tcpReceiveSocketLocalSockaddr.sin_addr = tcpReceiveSocketBoundInaddr;
+  if (bind(tcpReceiveSocket, (struct sockaddr*)&tcpReceiveSocketLocalSockaddr, sizeof tcpReceiveSocketLocalSockaddr) < 0)
   {
     close(tcpReceiveSocket);
-    exitError("cannot set interface for TCP socket");
+    freeifaddrs(ifaddr);
+    exitError("cannot bind TCP socket");
   }
 
   if (connect(tcpReceiveSocket, (struct sockaddr*)&tcpSockaddr, sizeof tcpSockaddr) == -1)
   {
     close(tcpReceiveSocket);
+    freeifaddrs(ifaddr);
     exitError("TCP connect failed");
   }
 
@@ -91,6 +117,7 @@ int main(int argc, const char** argv)
   if (send(tcpReceiveSocket, udpxyRequest, strlen(udpxyRequest), 0) == -1)
   {
     close(tcpReceiveSocket);
+    freeifaddrs(ifaddr);
     exitError("TCP send failed");
   }
 
@@ -98,6 +125,7 @@ int main(int argc, const char** argv)
   if (udpSendSocket == -1)
   {
     close(tcpReceiveSocket);
+    freeifaddrs(ifaddr);
     exitError("cannot create UDP socket");
   }
 
@@ -106,29 +134,14 @@ int main(int argc, const char** argv)
   {
     close(tcpReceiveSocket);
     close(udpSendSocket);
+    freeifaddrs(ifaddr);
     exitError("cannot build address for UDP socket");
   }
 
   uint8_t disableMulticastLoopback = 0;
   setsockopt(udpSendSocket, IPPROTO_IP, IP_MULTICAST_LOOP, &disableMulticastLoopback, sizeof disableMulticastLoopback);
 
-  struct ifaddrs* ifaddr;
-  if (getifaddrs(&ifaddr) == -1)
-  {
-    close(tcpReceiveSocket);
-    close(udpSendSocket);
-    exitError("getifaddrs() error");
-  }
-
-  struct in_addr udpSendSocketInterface = {0};
-  for (struct ifaddrs* ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
-  {
-    if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET && strcmp(ifa->ifa_name, streamMulticastInterface) == 0)
-    {
-      udpSendSocketInterface = ((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
-      break;
-    }
-  }
+  struct in_addr udpSendSocketInterface = getInaddr4ForInterface(streamMulticastInterface, ifaddr);
   freeifaddrs(ifaddr);
   if (udpSendSocketInterface.s_addr == 0)
   {
