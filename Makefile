@@ -1,6 +1,12 @@
 SHELL = /bin/sh
 
-override CFLAGS += -std=c99 -pedantic -D_DEFAULT_SOURCE -D_BSD_SOURCE
+UNAME := $(shell uname)
+ifeq ($(UNAME), Linux)
+	CFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE
+else
+	# macOS / *BSD
+	CFLAGS = -include bsd.h
+endif
 
 all:
-	$(CC) $(CFLAGS) -o HttpStream2Udp main.c
+	$(CC) $(CFLAGS) -std=c99 -pthread -pedantic -Wall -o HttpStream2Udp main.c
