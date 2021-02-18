@@ -142,21 +142,20 @@ void connectTcpSocket()
   }
 }
 
-uint32_t streamMulticastGroup;
-
-void* processUdpxyStream(void* unused)
+void* processUdpxyStream(void* arg)
 {
   static pthread_once_t connectTcpSocketOnce = PTHREAD_ONCE_INIT;
   if (pthread_once(&connectTcpSocketOnce, connectTcpSocket) != 0)
     perror("error calling connectTcpSocket() once");
 
   // TODO: connect() instead of passing in sendto() ?
+  const uint32_t streamMulticastGroup = *(uint32_t*)arg;
   udpSockaddr.sin_addr.s_addr = streamMulticastGroup;
 
   char multicastGroupStr[INET_ADDRSTRLEN] = {0};
   inet_ntop(AF_INET, &streamMulticastGroup, multicastGroupStr, INET_ADDRSTRLEN);
 
-  int udpxyRequestSize = snprintf(NULL, 0, UDPXY_REQUEST_FORMAT, multicastGroupStr, streamMulticastPort) + 1;
+  const int udpxyRequestSize = snprintf(NULL, 0, UDPXY_REQUEST_FORMAT, multicastGroupStr, streamMulticastPort) + 1;
   char udpxyRequest[udpxyRequestSize];
   snprintf(udpxyRequest, udpxyRequestSize, UDPXY_REQUEST_FORMAT, multicastGroupStr, streamMulticastPort);
   if (send(tcpReceiveSocket, udpxyRequest, strlen(udpxyRequest), 0) < 0)
@@ -170,7 +169,7 @@ void* processUdpxyStream(void* unused)
   for (;;)
   {
     char udpxyResponse[BUFFER_SIZE];
-    ssize_t responseBytes = recv(tcpReceiveSocket, udpxyResponse, BUFFER_SIZE, 0);
+    const ssize_t responseBytes = recv(tcpReceiveSocket, udpxyResponse, BUFFER_SIZE, 0);
     if (responseBytes < 0)
     {
       perror("ERROR receiving stream from udpxy");
@@ -190,10 +189,11 @@ void* processUdpxyStream(void* unused)
     {
       streamFound = true;
       size_t streamStartPos = streamPrefixInResponse - udpxyResponse + strlen(streamPrefix);
-      sendDataToUdp(udpxyResponse + streamStartPos, responseBytes - streamStartPos);
+      if (streamStartPos < responseBytes)
+        sendDataToUdp(udpxyResponse + streamStartPos, responseBytes - streamStartPos);
     }
   }
-  return NULL;
+//  return NULL;
 }
 
 int main(int argc, const char** argv)
@@ -222,17 +222,14 @@ int main(int argc, const char** argv)
   }
 
 #ifdef __linux__
-  int bindIgmpSocketToInterfaceResult = setsockopt(igmpSocket, SOL_SOCKET, SO_BINDTODEVICE, streamMulticastInterface, sizeof streamMulticastInterface);
-#else
-  int bindIgmpSocketToInterfaceResult = 0;
-#endif
-  if (bindIgmpSocketToInterfaceResult < 0)
+  if (setsockopt(igmpSocket, SOL_SOCKET, SO_BINDTODEVICE, streamMulticastInterface, sizeof streamMulticastInterface) < 0)
   {
     close(igmpSocket);
     exitError("cannot bind IGMP socket to interface");
   }
+#endif
 
-  struct in_addr igmpSocketBoundInaddr = getInaddr4ForInterface(streamMulticastInterface, igmpSocket);
+  const struct in_addr igmpSocketBoundInaddr = getInaddr4ForInterface(streamMulticastInterface, igmpSocket);
   if (igmpSocketBoundInaddr.s_addr == 0)
   {
     close(igmpSocket);
@@ -247,11 +244,12 @@ int main(int argc, const char** argv)
   prepareTcpSocket(udpxyAddress, udpxyPort, udpxyInterface);
   prepareUdpSocket(streamMulticastInterface);
 
-  pthread_attr_t threadAttr;
-  pthread_attr_init(&threadAttr);
-  pthread_attr_setdetachstate(&threadAttr, PTHREAD_CREATE_DETACHED);
+  pthread_attr_t detachedAttribute;
+  pthread_attr_init(&detachedAttribute);
+  pthread_attr_setdetachstate(&detachedAttribute, PTHREAD_CREATE_DETACHED);
 
   uint8_t joinGroupRequestCount = 0, leaveGroupRequestCount = 0; // TODO: verify group address
+  uint32_t activeMulticastGroup;
   bool threadCreated = false;
   pthread_t streamingThread;
   struct pollfd pollData = { .fd = igmpSocket, .events = POLLIN };
@@ -304,8 +302,8 @@ int main(int argc, const char** argv)
           break;
         joinGroupRequestCount = 0;
 
-        streamMulticastGroup = groupRecord->grec_mca;
-        threadCreated = pthread_create(&streamingThread, &threadAttr, processUdpxyStream, NULL) == 0;
+        activeMulticastGroup = groupRecord->grec_mca;
+        threadCreated = pthread_create(&streamingThread, &detachedAttribute, processUdpxyStream, &activeMulticastGroup) == 0;
         if (!threadCreated)
           perror("pthread_create failed");
         break;
@@ -313,7 +311,7 @@ int main(int argc, const char** argv)
     }
   }
 
-  pthread_attr_destroy(&threadAttr);
+  pthread_attr_destroy(&detachedAttribute);
   close(igmpSocket);
   close(tcpReceiveSocket);
   close(udpSendSocket);
