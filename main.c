@@ -20,6 +20,7 @@
 
 #define IGMP_BUFFER_SIZE 64
 #define BUFFER_SIZE 4096
+#define UDPXY_REQUEST_FORMAT "GET /udp/%s:%u HTTP/1.0\r\n\r\n"
 
 void exitError(const char* msg)
 {
@@ -141,27 +142,23 @@ void connectTcpSocket()
   }
 }
 
-void* processUdpxyStream(void* arg)
+uint32_t streamMulticastGroup;
+
+void* processUdpxyStream(void* unused)
 {
   static pthread_once_t connectTcpSocketOnce = PTHREAD_ONCE_INIT;
   if (pthread_once(&connectTcpSocketOnce, connectTcpSocket) != 0)
     perror("error calling connectTcpSocket() once");
 
-  const uint32_t streamMulticastGroup = *(uint32_t*)arg;
-
   // TODO: connect() instead of passing in sendto() ?
   udpSockaddr.sin_addr.s_addr = streamMulticastGroup;
-  // if (!buildSockaddr4(streamMulticastGroup, streamMulticastPort, &udpSockaddr)) // TODO: use other func
-  // {
-  //   close(tcpReceiveSocket);
-  //   close(udpSendSocket);
-  //   exitError("cannot build address for UDP socket");
-  // }
 
-  const char* udpxyFormat = "GET /udp/%s:%u HTTP/1.0\r\n\r\n";
-  int udpxyRequestSize = snprintf(NULL, 0, udpxyFormat, streamMulticastGroup, streamMulticastPort) + 1;
+  char multicastGroupStr[INET_ADDRSTRLEN] = {0};
+  inet_ntop(AF_INET, &streamMulticastGroup, multicastGroupStr, INET_ADDRSTRLEN);
+
+  int udpxyRequestSize = snprintf(NULL, 0, UDPXY_REQUEST_FORMAT, multicastGroupStr, streamMulticastPort) + 1;
   char udpxyRequest[udpxyRequestSize];
-  snprintf(udpxyRequest, udpxyRequestSize, udpxyFormat, streamMulticastGroup, streamMulticastPort);
+  snprintf(udpxyRequest, udpxyRequestSize, UDPXY_REQUEST_FORMAT, multicastGroupStr, streamMulticastPort);
   if (send(tcpReceiveSocket, udpxyRequest, strlen(udpxyRequest), 0) < 0)
   {
     close(tcpReceiveSocket);
@@ -307,7 +304,8 @@ int main(int argc, const char** argv)
           break;
         joinGroupRequestCount = 0;
 
-        threadCreated = pthread_create(&streamingThread, &threadAttr, processUdpxyStream, &groupRecord->grec_mca) == 0;
+        streamMulticastGroup = groupRecord->grec_mca;
+        threadCreated = pthread_create(&streamingThread, &threadAttr, processUdpxyStream, NULL) == 0;
         if (!threadCreated)
           perror("pthread_create failed");
         break;
